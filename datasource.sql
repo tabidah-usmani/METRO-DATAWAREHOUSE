@@ -7,12 +7,13 @@ use `datasource` ;
 
 
 create table transactions (
-  ORDER_ID INT,
+  ORDER_ID INT PRIMARY KEY,
   ORDER_DATE DATE,
   PRODUCT_ID INT NOT NULL,
   QUANTITY INT,
   CUSTOMER_ID INT NOT NULL,
-  PRIMARY KEY (ORDER_ID, CUSTOMER_ID, PRODUCT_ID)
+  TIME_ID INT NOT NULL
+  
 );
 
  create table products(
@@ -35,24 +36,24 @@ create table customers(
 
 
 
-LOAD DATA LOCAL INFILE "E:/OneDrive - FAST National University/Semester5/Data Warehousing/Project/transactions_data.csv"
+LOAD DATA LOCAL INFILE "E:/OneDrive - FAST National University/Semester5/Data Warehousing/Project/transactions.csv"
 INTO TABLE transactions
 FIELDS TERMINATED BY ',' 
 ENCLOSED BY '"' 
 LINES TERMINATED BY '\n'
 IGNORE 1 ROWS
-(ORDER_ID, ORDER_DATE, PRODUCT_ID, QUANTITY, CUSTOMER_ID);
+(ORDER_ID, ORDER_DATE, PRODUCT_ID, QUANTITY, CUSTOMER_ID, TIME_ID);
 
 
 
-LOAD DATA LOCAL INFILE 'E:/OneDrive - FAST National University/Semester5/Data Warehousing/Project/customers_data.csv'
+LOAD DATA LOCAL INFILE 'E:/OneDrive - FAST National University/Semester5/Data Warehousing/Project/customers.csv'
 INTO TABLE customers
 FIELDS TERMINATED BY ',' 
 ENCLOSED BY '"'
 LINES TERMINATED BY '\n'
 IGNORE 1 ROWS;
 
-LOAD DATA LOCAL INFILE "E:/OneDrive - FAST National University/Semester5/Data Warehousing/Project/products_data.csv"
+LOAD DATA LOCAL INFILE "E:/OneDrive - FAST National University/Semester5/Data Warehousing/Project/products.csv"
 INTO TABLE products
 FIELDS TERMINATED BY ',' 
 ENCLOSED BY '"'
