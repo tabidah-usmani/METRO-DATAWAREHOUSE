@@ -41,13 +41,14 @@ create table datawarehouse.supplier(
     );
     
 create table datawarehouse.timee(
-	TIME_ID INT PRIMARY KEY,
+	TIME_ID INT,
     ORDER_DATE DATE,
     DAY INT,
     WEEK INT,
     MONTH INT,
     YEAR INT,
-    QUARTER INT);
+    QUARTER INT,
+    PRIMARY KEY(TIME_ID, ORDER_DATE));
     
 create table datawarehouse.sales(
 	ORDER_ID INT PRIMARY KEY,
@@ -64,7 +65,7 @@ create table datawarehouse.sales(
 	FOREIGN KEY (STORE_ID) REFERENCES datawarehouse.store(STORE_ID),
 	FOREIGN KEY (SUPPLIER_ID) REFERENCES datawarehouse.supplier(SUPPLIER_ID),
 	FOREIGN KEY (TIME_ID) REFERENCES datawarehouse.timee(TIME_ID)
-
+	
     );
 
 

@@ -12,7 +12,7 @@ create table transactions (
   PRODUCT_ID INT NOT NULL,
   QUANTITY INT,
   CUSTOMER_ID INT NOT NULL,
-  TIME_ID INT NOT NULL
+  TIME_ID INT
   
 );
 
