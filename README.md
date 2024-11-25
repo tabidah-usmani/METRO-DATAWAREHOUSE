@@ -4,6 +4,7 @@
 Download MySQL and Eclipse IDE for Java Developers
 
 **STEPS**
+
 1. Clone the repository onto your local machine.It will get you a copy project up and running.
 git clone https://github.com/tabidah-usmani/METRO-DATAWAREHOUSE.git
 
