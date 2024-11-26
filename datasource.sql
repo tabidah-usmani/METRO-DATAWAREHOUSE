@@ -1,5 +1,5 @@
 -- drop database if exists `datasource` ;
-DROP TABLE if exists `TRANSACTIONS`;
+-- DROP TABLE if exists `TRANSACTIONS`;
 -- DROP TABLE if exists `CUSTOMERS`;
 -- DROP TABLE if exists `PRODUCTS`;
 -- CREATE database `datasource` ;

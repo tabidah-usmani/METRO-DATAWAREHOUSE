@@ -12,8 +12,11 @@ import java.sql.Statement;
 public class MeshJoinProcessor 
 {
     private static final String DB_URL_TEMPLATE = "jdbc:mysql://localhost:3306/%s?useSSL=false";
-    private static int PARTITION_SIZE = 100; // Size of each partition or batch
+    //partition that is being loaded into w
+    private static int PARTITION_SIZE = 200; 
 
+    //user input for databases from which the data has to be loaded and where data has to be placed
+    //connection is also provided over here
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
 
@@ -35,62 +38,66 @@ public class MeshJoinProcessor
         String dbUrlWarehouse = String.format(DB_URL_TEMPLATE, datawarehouseName);
 
         try (Connection connSource = DriverManager.getConnection(dbUrlSource, user, pass);
-             Connection connWarehouse = DriverManager.getConnection(dbUrlWarehouse, user, pass)) 
-        {
+             Connection connWarehouse = DriverManager.getConnection(dbUrlWarehouse, user, pass)) {
             meshJoin(connSource, connWarehouse);
-        } 
-        catch (SQLException e) 
-        {
+        } catch (SQLException e) {
             e.printStackTrace();
         }
     }
 
+    //creating a customer,product buffer to create a master data and creates batches to process data
+    //each segment of transaction is loaded into the transaction map and then into a queue.
+    //a new batch is processed whn master data is not in buffer
+    
     private static void meshJoin(Connection connSource, Connection connWarehouse) throws SQLException {
         int offsetCustomer = 0;
         int offsetProduct = 0;
         int limit = PARTITION_SIZE;
 
+        
         Map<Integer, Customer> customerBuffer = new HashMap<>();
         Map<Integer, Product> productBuffer = new HashMap<>();
 
         String transactionQuery = "SELECT * FROM transactions";
         try (Statement stmtTransactions = connSource.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
              ResultSet rsTransactions = stmtTransactions.executeQuery(transactionQuery)) {
+        	
+            // Prepare to fetch transactions in segments
+            rsTransactions.last();
+            int totalTransactions = rsTransactions.getRow(); // Get total number of transactions
+            rsTransactions.beforeFirst(); // Move cursor before the first row
 
-            // Stream transactions in segments
             while (rsTransactions.next()) {
-                Map<Integer, Transaction> transactionMap = readTransactionSegment(rsTransactions);
-                Queue<Transaction> transactionQueue = new LinkedList<>(transactionMap.values());
+                do {
+                    Map<Integer, Transaction> transactionMap = readTransactionSegment(rsTransactions, limit);
+                    Queue<Transaction> transactionQueue = new LinkedList<>(transactionMap.values());
 
-                while (!transactionQueue.isEmpty()) {
-                    // Load customer buffer if empty
-                    if (customerBuffer.isEmpty()) {
-                        customerBuffer = loadCustomerPartition(connSource, offsetCustomer, limit);
-                        offsetCustomer += limit;
+                    while (!transactionQueue.isEmpty()) {
+                        Transaction transaction = transactionQueue.poll();
 
-                        // Reset offsetCustomer to 0 if it exceeds the number of rows in the table
-                        if (offsetCustomer >= getRowCount(connSource, "customers")) {
-                            offsetCustomer = 0;
+                        // Load customer buffer if needed
+                        if (!customerBuffer.containsKey(transaction.getCustomerId())) {
+                            customerBuffer = loadCustomerPartition(connSource, offsetCustomer, limit);
+                            offsetCustomer += limit;
+                            if (offsetCustomer >= getRowCount(connSource, "customers")) offsetCustomer = 0;
                         }
-                    }
 
-                    // Load product buffer if empty
-                    if (productBuffer.isEmpty()) {
-                        productBuffer = loadProductPartition(connSource, offsetProduct, limit);
-                        offsetProduct += limit;
-
-                        // Reset offsetProduct to 0 if it exceeds the number of rows in the table
-                        if (offsetProduct >= getRowCount(connSource, "products")) {
-                            offsetProduct = 0;
+                        // Load product buffer if needed
+                        if (!productBuffer.containsKey(transaction.getProductId())) {
+                            productBuffer = loadProductPartition(connSource, offsetProduct, limit);
+                            offsetProduct += limit;
+                            if (offsetProduct >= getRowCount(connSource, "products")) offsetProduct = 0;
                         }
-                    }
 
-                    // Process transaction queue
-                    processTransactions(transactionQueue, customerBuffer, productBuffer, connWarehouse, connSource);
-                }
+                        // Process each transaction in batch
+                        processTransactions(transaction, customerBuffer, productBuffer, connWarehouse, connSource);
+                    }
+                    flushTransactionBatch(connWarehouse); // Execute batch after processing each segment
+                } while (rsTransactions.getRow() % limit != 0 && rsTransactions.next()); // Ensure batch processing continues
             }
         }
     }
+
     
     private static int getRowCount(Connection conn, String tableName) throws SQLException {
         String countQuery = "SELECT COUNT(*) FROM " + tableName;
@@ -102,27 +109,26 @@ public class MeshJoinProcessor
         }
         return 0;
     }
-
-    private static Map<Integer, Transaction> readTransactionSegment(ResultSet rsTransactions) throws SQLException {
+    //extracts a segment of transactions from the result set and iterates through
+    private static Map<Integer, Transaction> readTransactionSegment(ResultSet rsTransactions, int limit) throws SQLException {
         Map<Integer, Transaction> transactionMap = new HashMap<>();
         int count = 0;
 
         do {
             int orderId = rsTransactions.getInt("ORDER_ID");
-            Date orderDate = rsTransactions.getDate("ORDER_DATE"); // java.sql.Date
+            Date orderDate = rsTransactions.getDate("ORDER_DATE");
             int productId = rsTransactions.getInt("PRODUCT_ID");
             int quantity = rsTransactions.getInt("QUANTITY");
             int customerId = rsTransactions.getInt("CUSTOMER_ID");
-            int timeId = rsTransactions.getInt("TIME_ID"); // Include TIME_ID from the transactions table
+            int timeId = rsTransactions.getInt("TIME_ID");
 
-            // Pass timeId to the Transaction constructor
             transactionMap.put(orderId, new Transaction(orderId, orderDate, productId, quantity, customerId, timeId));
             count++;
-        } while (rsTransactions.next() && count < PARTITION_SIZE);
+        } while (count < limit && rsTransactions.next());
 
         return transactionMap;
     }
-
+    //loads a batch of customer from source database into a map, acting as a buffer
     private static Map<Integer, Customer> loadCustomerPartition(Connection connSource, int offset, int limit) throws SQLException {
         Map<Integer, Customer> customerMap = new HashMap<>();
         String customerQuery = "SELECT * FROM customers LIMIT ?, ?";
@@ -140,7 +146,7 @@ public class MeshJoinProcessor
         }
         return customerMap;
     }
-
+    //loads a batch of products from source database into a map 
     private static Map<Integer, Product> loadProductPartition(Connection connSource, int offset, int limit) throws SQLException {
         Map<Integer, Product> productMap = new HashMap<>();
         String productQuery = "SELECT * FROM products LIMIT ?, ?";
@@ -158,58 +164,80 @@ public class MeshJoinProcessor
         }
         return productMap;
     }
-
+    
     private static int getTimeIdFromTransaction(Transaction transaction) {
         // Assuming TIME_ID is directly linked to the Transaction object
         return transaction.getTimeId();
     }
-    
-    private static void processTransactions(Queue<Transaction> transactionQueue,
+    //before inserting the transaction records it ensures whether the datawarehouse is populated with the products,store,supplier table
+    //helper functions are included and prepares data for execution in datawarehouse
+    private static void processTransactions(Transaction transaction,
             Map<Integer, Customer> customerPartition,
             Map<Integer, Product> productPartition,
             Connection connWarehouse,
             Connection connSource) throws SQLException {
-// Pre-compute the total products sold for each PRODUCT_ID
+        Customer customer = customerPartition.get(transaction.getCustomerId());
+        Product product = productPartition.get(transaction.getProductId());
 
-while (!transactionQueue.isEmpty()) {
-Transaction transaction = transactionQueue.poll();
-Customer customer = customerPartition.get(transaction.getCustomerId());
-Product product = productPartition.get(transaction.getProductId());
+        if (customer != null && product != null) {
+            // Load store and supplier details
+            String productQuery = "SELECT STORE_ID, STORE_NAME, SUPPLIER_ID, SUPPLIER_NAME FROM products WHERE PRODUCT_ID = ?";
+            try (PreparedStatement pstmtProduct = connSource.prepareStatement(productQuery)) {
+                pstmtProduct.setInt(1, transaction.getProductId());
+                try (ResultSet rsProductDetails = pstmtProduct.executeQuery()) {
+                    if (rsProductDetails.next()) {
+                        int storeId = rsProductDetails.getInt("STORE_ID");
+                        String storeName = rsProductDetails.getString("STORE_NAME");
+                        int supplierId = rsProductDetails.getInt("SUPPLIER_ID");
+                        String supplierName = rsProductDetails.getString("SUPPLIER_NAME");
 
-if (customer != null && product != null) {
-// Load store and supplier details
-String productQuery = "SELECT STORE_ID, STORE_NAME, SUPPLIER_ID, SUPPLIER_NAME FROM products WHERE PRODUCT_ID = ?";
-try (PreparedStatement pstmtProduct = connSource.prepareStatement(productQuery)) {
-pstmtProduct.setInt(1, transaction.getProductId());
+                        // Ensure product, customer, store, and supplier exist in warehouse
+                        ensureProductExists(connWarehouse, product);
+                        ensureCustomerExists(connWarehouse, customer);
+                        ensureStoreExists(connWarehouse, storeId, storeName);
+                        ensureSupplierExists(connWarehouse, supplierId, supplierName);
+                        populateTimeTable(connSource, connWarehouse);
 
-try (ResultSet rsProductDetails = pstmtProduct.executeQuery()) {
-if (rsProductDetails.next()) {
-int storeId = rsProductDetails.getInt("STORE_ID");
-String storeName = rsProductDetails.getString("STORE_NAME");
-int supplierId = rsProductDetails.getInt("SUPPLIER_ID");
-String supplierName = rsProductDetails.getString("SUPPLIER_NAME");
+                        // Fetch total products sold (sum of quantities) for this PRODUCT_ID
+                        double totalSales = product.getProductPrice() * transaction.getQuantity();
+                        int timeId = getTimeIdFromTransaction(transaction); // Retrieve TIME_ID
+                        addToTransactionBatch(connWarehouse, transaction, totalSales, storeId, supplierId, timeId);
+                    }
+                }
+            }
+        }
+    }
 
-// Ensure product, customer, store, and supplier exist in warehouse
-ensureProductExists(connWarehouse, product);
-ensureCustomerExists(connWarehouse, customer);
-ensureStoreExists(connWarehouse, storeId, storeName);
-ensureSupplierExists(connWarehouse, supplierId, supplierName);
-populateTimeTable(connSource, connWarehouse);
-
-// Fetch total products sold (sum of quantities) for this PRODUCT_ID
-
-// Insert enriched transaction into sales
-double totalSales = product.getProductPrice() * transaction.getQuantity();
-int timeId = getTimeIdFromTransaction(transaction); // Retrieve TIME_ID
-insertSales(connWarehouse, transaction, totalSales, storeId, supplierId, timeId);
+    private static PreparedStatement salesInsertStatement; // Global statement to handle batch inserts
+    //adds transaction data to a batch
+	private static void addToTransactionBatch(Connection connWarehouse, Transaction transaction, double totalSales, int storeId, int supplierId, int timeId) throws SQLException {
+    if (salesInsertStatement == null) {
+        String insertQuery = """
+            INSERT INTO sales (ORDER_ID, QUANTITY, CUSTOMER_ID, PRODUCT_ID, STORE_ID, SUPPLIER_ID, TOTAL_SALES, TIME_ID) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+        salesInsertStatement = connWarehouse.prepareStatement(insertQuery);
+    }
+    salesInsertStatement.setInt(1, transaction.getOrderId());
+    salesInsertStatement.setInt(2, transaction.getQuantity());
+    salesInsertStatement.setInt(3, transaction.getCustomerId());
+    salesInsertStatement.setInt(4, transaction.getProductId());
+    salesInsertStatement.setInt(5, storeId);
+    salesInsertStatement.setInt(6, supplierId);
+    salesInsertStatement.setDouble(7, totalSales);
+    salesInsertStatement.setInt(8, timeId);
+    salesInsertStatement.addBatch();
 }
+	
+	private static void flushTransactionBatch(Connection connWarehouse) throws SQLException {
+    if (salesInsertStatement != null) {
+        salesInsertStatement.executeBatch();
+        salesInsertStatement.close();
+        salesInsertStatement = null; // Reset statement after batch execution
+    }
 }
-}
-}
-}
-}
-
-    private static void ensureProductExists(Connection connWarehouse, Product product) throws SQLException 
+   
+	private static void ensureProductExists(Connection connWarehouse, Product product) throws SQLException 
     {
         String checkProductQuery = "SELECT PRODUCT_ID FROM product WHERE PRODUCT_ID = ?";
         try (PreparedStatement pstmtCheck = connWarehouse.prepareStatement(checkProductQuery)) 
@@ -332,31 +360,22 @@ insertSales(connWarehouse, transaction, totalSales, storeId, supplierId, timeId)
     }
 
     private static void insertSales(Connection connWarehouse, Transaction transaction, double totalSales, int storeId, int supplierId, int timeId) throws SQLException {
-        String checkQuery = "SELECT TIME_ID FROM sales WHERE TIME_ID = ?";
-        try (PreparedStatement pstmtCheck = connWarehouse.prepareStatement(checkQuery)) {
-            pstmtCheck.setInt(1, timeId);
-            try (ResultSet rsCheck = pstmtCheck.executeQuery()) {
-                if (!rsCheck.next()) { // Proceed only if TIME_ID is not already in the sales table
-                    String insertQuery = """
-                        INSERT INTO sales (ORDER_ID, QUANTITY, CUSTOMER_ID, PRODUCT_ID, STORE_ID, SUPPLIER_ID, TOTAL_SALES, TIME_ID) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """;
-                    try (PreparedStatement pstmtInsert = connWarehouse.prepareStatement(insertQuery)) {
-                        pstmtInsert.setInt(1, transaction.getOrderId());
-                        pstmtInsert.setInt(2, transaction.getQuantity());
-                        pstmtInsert.setInt(3, transaction.getCustomerId());
-                        pstmtInsert.setInt(4, transaction.getProductId());
-                        pstmtInsert.setInt(5, storeId);
-                        pstmtInsert.setInt(6, supplierId);
-                        pstmtInsert.setDouble(7, totalSales);
-                        pstmtInsert.setInt(8, timeId); // Include TIME_ID
-                        pstmtInsert.executeUpdate();
-                    }
-                }
-            }
+        String insertQuery = """
+            INSERT INTO sales (ORDER_ID, QUANTITY, CUSTOMER_ID, PRODUCT_ID, STORE_ID, SUPPLIER_ID, TOTAL_SALES, TIME_ID) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+        try (PreparedStatement pstmtInsert = connWarehouse.prepareStatement(insertQuery)) {
+            pstmtInsert.setInt(1, transaction.getOrderId());
+            pstmtInsert.setInt(2, transaction.getQuantity());
+            pstmtInsert.setInt(3, transaction.getCustomerId());
+            pstmtInsert.setInt(4, transaction.getProductId());
+            pstmtInsert.setInt(5, storeId);
+            pstmtInsert.setInt(6, supplierId);
+            pstmtInsert.setDouble(7, totalSales);
+            pstmtInsert.setInt(8, timeId); // Include TIME_ID as it might be used for reporting or tracking, even if not unique
+            pstmtInsert.executeUpdate();
         }
     }
-
 
 }
 
@@ -441,4 +460,3 @@ class Product
 
 
 }
-

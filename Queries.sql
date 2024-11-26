@@ -73,6 +73,39 @@ GROUP BY
 -- query number5: Calculate the month-to-month revenue volatility for each store and supplier pair. Volatility can be 
 -- defined as the percentage change in revenue from one month to the next, helping identify stores 
 -- or suppliers with highly fluctuating sales. 
+SELECT
+    YEAR,
+    MONTH,
+    STORE_ID,
+    SUPPLIER_ID,
+    CURRENT_REVENUE,
+    PREVIOUS_REVENUE,
+    CASE
+        WHEN PREVIOUS_REVENUE = 0 THEN NULL -- Avoid division by zero, represent no change as NULL
+        WHEN PREVIOUS_REVENUE IS NULL THEN NULL -- No previous month data
+        ELSE ((CURRENT_REVENUE - PREVIOUS_REVENUE) / PREVIOUS_REVENUE) * 100
+    END AS PERCENTAGE_CHANGE
+FROM (
+    SELECT
+        t.year,
+        t.month,
+        s.STORE_ID,
+        s.SUPPLIER_ID,
+        SUM(s.TOTAL_SALES) AS current_revenue,
+        LAG(SUM(s.TOTAL_SALES), 1) OVER (PARTITION BY s.STORE_ID, s.SUPPLIER_ID ORDER BY t.year, t.month) AS previous_revenue
+    FROM
+        sales s
+    JOIN
+        timee t ON s.TIME_ID = t.TIME_ID
+    GROUP BY
+        t.year,
+        t.month,
+        s.STORE_ID,
+        s.SUPPLIER_ID
+) AS RevenueData
+ORDER BY
+    STORE_ID, SUPPLIER_ID, YEAR, MONTH;
+
 
  
 -- query number6: Identify the top 5 products frequently bought together within a set of orders (i.e., multiple 
@@ -130,6 +163,59 @@ ORDER BY
  
  -- query number9: Calculate daily average sales for each product and flag days where the sales exceed twice the daily 
 -- average by product as potential outliers or spikes.
+WITH DailyAverages AS (
+    SELECT 
+        PRODUCT_ID,
+        AVG(TOTAL_SALES) AS avg_daily_sales
+    FROM 
+        sales
+    GROUP BY 
+        PRODUCT_ID
+)
 
--- query number10:
+SELECT 
+    s.PRODUCT_ID,
+    MAX(s.TOTAL_SALES) AS daily_sales,
+    da.avg_daily_sales,
+    MAX(CASE 
+        WHEN s.TOTAL_SALES > 2 * da.avg_daily_sales THEN 'Yes'
+        ELSE 'No'
+    END) AS outliers
+FROM 
+    sales s
+JOIN 
+    DailyAverages da ON s.PRODUCT_ID = da.PRODUCT_ID
+GROUP BY 
+    s.PRODUCT_ID, da.avg_daily_sales
+ORDER BY 
+    s.PRODUCT_ID;
+
+
+
+-- query number10: Create a view named REGION_STORE_QUARTERLY_SALES that aggregates total quarterly sales by 
+-- region and store, ordered by region and then by store name. This view allows quick retrieval of 
+-- regional and store-specific trends across quarters, significantly improving query performance for 
+-- regular sales analysis.
     
+CREATE VIEW REGION_STORE_QUARTERLY_SALES AS
+SELECT
+    st.store_name,
+    t.year ,
+    t.quarter,
+    SUM(s.total_sales) AS total_sales
+FROM
+    sales s
+JOIN
+    store st ON s.store_id = st.store_id
+JOIN
+    timee t ON s.time_id = t.time_id
+GROUP BY
+    st.store_name,
+    t.year,
+    t.quarter
+ORDER BY
+     st.store_name,
+    t.year,
+    t.quarter;
+
+

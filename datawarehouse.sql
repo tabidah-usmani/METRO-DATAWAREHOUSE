@@ -1,17 +1,12 @@
-drop schema if exists `datawarehouse` ;
-DROP TABLE if exists `datawarehouse`.`product`;
-DROP TABLE if exists `datawarehouse`.`supplier`;
-DROP TABLE if exists `datawarehouse`.`customer`;
-DROP TABLE if exists `datawarehouse`.`store`;
-DROP TABLE if exists `datawarehouse`.`sales`;
-CREATE SCHEMA `datawarehouse` ;
+-- drop schema if exists `datawarehouse` ;
+-- DROP TABLE if exists `datawarehouse`.`product`;
+-- DROP TABLE if exists `datawarehouse`.`supplier`;
+-- DROP TABLE if exists `datawarehouse`.`customer`;
+-- DROP TABLE if exists `datawarehouse`.`store`;
+-- DROP TABLE if exists `datawarehouse`.`sales`;
+-- CREATE SCHEMA `datawarehouse` ;
 
--- drop schema if exists `datasource` ;
--- DROP TABLE if exists `TRANSACTIONS`;
--- DROP TABLE if exists `CUSTOMERS`;
--- DROP TABLE if exists `PRODUCTS`;
--- CREATE SCHEMA `datasource` ;
--- use `datasource` ;
+
 
 -- these are for creating datawarehouse which will be populated by meshjoin in java 
 use datawarehouse;
